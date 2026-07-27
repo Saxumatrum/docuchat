@@ -75,7 +75,7 @@ export function FileUpload({
       <div>
         <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">Documents</h2>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Upload .pdf, .txt, or .md files to chat with them.
+          Upload .pdf, .txt, .md, or .docx files to chat with them.
         </p>
       </div>
 
@@ -91,14 +91,14 @@ export function FileUpload({
           {isUploading ? "Processing…" : "Click to upload"}
         </span>
         <span className="text-xs text-zinc-400 dark:text-zinc-600">
-          PDF, TXT, or MD — multiple files supported
+          PDF, TXT, MD, or DOCX — multiple files supported
         </span>
         <input
           ref={inputRef}
           id="file-upload"
           type="file"
           multiple
-          accept=".pdf,.txt,.md,application/pdf,text/plain,text/markdown"
+          accept=".pdf,.txt,.md,.docx,application/pdf,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           disabled={isUploading}
           onChange={(e) => handleFiles(e.target.files)}
           className="sr-only"

@@ -1,7 +1,7 @@
 # docuchat
 
 A small retrieval-augmented generation (RAG) chatbot. Upload one or more
-documents (PDF, TXT, or Markdown), then ask questions — the assistant answers
+documents (PDF, TXT, Markdown, or DOCX), then ask questions — the assistant answers
 strictly from the content you uploaded and cites which chunk of which
 document each part of its answer came from.
 
@@ -17,8 +17,8 @@ no accounts. Everything runs in a single Next.js app.
   `"provider/model"` strings (e.g. `"anthropic/claude-sonnet-5"`,
   `"openai/text-embedding-3-small"`); no provider-specific SDK package is
   installed
-- **pdf-parse** for PDF text extraction; plain text/Markdown files are read
-  directly
+- **pdf-parse** for PDF text extraction, **mammoth** for DOCX text extraction;
+  plain text/Markdown files are read directly
 - A hand-rolled, in-memory vector store (array of chunks + cosine similarity)
   — no external vector database
 
@@ -41,7 +41,8 @@ the AI SDK once a request actually reaches the model provider.
 ## How it works
 
 1. **Upload** — `POST /api/upload` accepts one or more files. PDFs are parsed
-   with `pdf-parse`; `.txt`/`.md` files are read as plain text.
+   with `pdf-parse`, `.docx` files with `mammoth`; `.txt`/`.md` files are read
+   as plain text.
 2. **Chunking** — each document's text is split into overlapping ~550-word
    chunks (roughly 500-800 tokens, with a ~60-word overlap so context isn't
    lost at chunk boundaries). See `src/lib/chunk.ts`.

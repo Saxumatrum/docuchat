@@ -9,7 +9,7 @@ import { EMBEDDING_MODEL } from "@/lib/models";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const ALLOWED_EXTENSIONS = [".pdf", ".txt", ".md"];
+const ALLOWED_EXTENSIONS = [".pdf", ".txt", ".md", ".docx"];
 
 interface UploadResult {
   sourceName: string;
@@ -30,6 +30,12 @@ async function extractText(file: File): Promise<string> {
     } finally {
       await parser.destroy();
     }
+  }
+
+  if (name.endsWith(".docx")) {
+    const { extractRawText } = await import("mammoth");
+    const result = await extractRawText({ buffer });
+    return result.value;
   }
 
   return buffer.toString("utf-8");
@@ -61,7 +67,7 @@ export async function POST(req: Request) {
       results.push({
         sourceName: file.name,
         chunkCount: 0,
-        error: `Unsupported file type "${extension || "unknown"}". Use .pdf, .txt, or .md.`,
+        error: `Unsupported file type "${extension || "unknown"}". Use .pdf, .txt, .md, or .docx.`,
       });
       continue;
     }
