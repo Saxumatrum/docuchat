@@ -2,7 +2,7 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatUIMessage, SourceCitation } from "@/lib/types";
 
 function SourcesList({ sources }: { sources: SourceCitation[] }) {
@@ -72,15 +72,35 @@ export function ChatPanel({ documentsReady }: { documentsReady: boolean }) {
     transport: new DefaultChatTransport({ api: "/api/chat" }),
   });
   const [input, setInput] = useState("");
+  const scrollAnchorRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isBusy = status === "submitted" || status === "streaming";
 
-  function handleSubmit(e: React.FormEvent) {
+  useEffect(() => {
+    scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, status]);
+
+  function handleSubmit(e: { preventDefault: () => void }) {
     e.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isBusy) return;
     sendMessage({ text: trimmed });
     setInput("");
+    if (textareaRef.current) textareaRef.current.style.height = "auto";
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      handleSubmit(e);
+    }
+  }
+
+  function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    const el = e.target;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }
 
   return (
@@ -131,25 +151,31 @@ export function ChatPanel({ documentsReady }: { documentsReady: boolean }) {
             </div>
           </div>
         )}
+        <div ref={scrollAnchorRef} />
       </div>
 
       <form
         onSubmit={handleSubmit}
-        className="flex items-center gap-2 border-t border-zinc-200 px-4 py-3 sm:px-6 dark:border-zinc-800"
+        className="flex items-end gap-2 border-t border-zinc-200 px-4 py-3 sm:px-6 dark:border-zinc-800"
       >
-        <input
+        <textarea
+          ref={textareaRef}
+          rows={1}
           value={input}
-          onChange={(e) => setInput(e.target.value)}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
           disabled={!documentsReady || isBusy}
           placeholder={
-            documentsReady ? "Ask a question about your document…" : "Upload a document first…"
+            documentsReady
+              ? "Ask a question about your document… (Shift+Enter for a new line)"
+              : "Upload a document first…"
           }
-          className="flex-1 rounded-full border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500"
+          className="max-h-40 flex-1 resize-none rounded-2xl border border-zinc-300 bg-white px-4 py-2 text-sm text-zinc-900 outline-none placeholder:text-zinc-400 focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus:border-zinc-500"
         />
         <button
           type="submit"
           disabled={!documentsReady || isBusy || !input.trim()}
-          className="rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          className="shrink-0 rounded-full bg-zinc-900 px-4 py-2 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
         >
           {isBusy ? "Sending…" : "Send"}
         </button>
