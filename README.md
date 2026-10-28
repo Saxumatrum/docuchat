@@ -19,8 +19,8 @@ no accounts. Everything runs in a single Next.js app.
   installed
 - **pdf-parse** for PDF text extraction, **mammoth** for DOCX text extraction;
   plain text/Markdown files are read directly
-- A hand-rolled, in-memory vector store (array of chunks + cosine similarity)
-  — no external vector database
+- Hand-rolled retrieval (an array of chunks + cosine similarity) that runs in
+  the visitor's browser — no external vector database
 
 ## Setup
 
@@ -43,17 +43,19 @@ the AI SDK once a request actually reaches the model provider.
 1. **Upload** — `POST /api/upload` accepts one or more files. PDFs are parsed
    with `pdf-parse`, `.docx` files with `mammoth`; `.txt`/`.md` files are read
    as plain text.
-2. **Chunking** — each document's text is split into overlapping ~550-word
-   chunks (roughly 500-800 tokens, with a ~60-word overlap so context isn't
-   lost at chunk boundaries). See `src/lib/chunk.ts`.
+2. **Chunking** — each document's text is split into chunks of whole
+   sentences, packed up to ~120 words, with one sentence of overlap so context
+   isn't lost at boundaries. On the sample handbook this ranks the answering
+   chunk first for 10/10 test questions (550-word windows managed 6/10). See
+   `src/lib/chunk.ts`.
 3. **Embedding** — every chunk is embedded in a single batched call via the AI
    SDK's `embedMany`, using `openai/text-embedding-3-small` through the AI
-   Gateway. Chunks are stored in memory alongside their source filename and
-   chunk index (`src/lib/store.ts`).
-4. **Retrieval** — when a question comes in, `POST /api/chat` embeds the
-   question with `embed`, then ranks every stored chunk by cosine similarity
-   and takes the top 5 matches.
-5. **Generation** — the top matches are formatted into a numbered context
+   Gateway. The chunks and their embeddings are returned to the browser; the
+   server keeps nothing.
+4. **Retrieval** — when a question is asked, the browser gets its embedding
+   from `POST /api/embed`, ranks its own chunks by cosine similarity
+   (`src/lib/retrieval.ts`) and takes the top 5 matches.
+5. **Generation** — the top matches are sent to `POST /api/chat`, formatted into a numbered context
    block and passed to `streamText` (model: `anthropic/claude-sonnet-5`) as
    part of the system prompt, with instructions to cite sources inline using
    bracketed numbers like `[1]`.
@@ -68,29 +70,27 @@ the AI SDK once a request actually reaches the model provider.
 src/
   app/
     api/
-      upload/route.ts   # extract -> chunk -> embed -> store
-      chat/route.ts     # embed question -> retrieve -> stream answer + sources
+      upload/route.ts   # extract -> chunk -> embed -> return to browser
+      embed/route.ts    # embed a question for client-side retrieval
+      chat/route.ts     # retrieved context -> stream answer + sources
     page.tsx             # landing page: upload panel + chat panel
   components/
     FileUpload.tsx       # upload UI, document list, per-file status
     ChatPanel.tsx         # useChat-powered chat UI with citations
   lib/
-    chunk.ts              # word-based chunking with overlap
-    store.ts               # in-memory vector store (cosine similarity)
+    chunk.ts              # sentence-based chunking with overlap
+    retrieval.ts           # cosine similarity search over the browser's chunks
     models.ts              # model IDs + retrieval settings
     types.ts                # shared UI message / citation types
 ```
 
 ## Important limitations (by design, for a demo)
 
-- The vector store is a **module-level in-memory array**. It resets whenever
-  the server restarts, and it is shared across every visitor — there is no
-  per-user or per-session isolation. This is intentional for a small,
-  self-contained demo and is **not** suitable for production or multi-user
-  deployments. Swap `src/lib/store.ts` for a real vector database (Postgres +
-  pgvector, Pinecone, Turbopuffer, etc.) to make this production-ready.
-- There is no authentication, rate limiting, or file-size validation beyond
-  what the browser/runtime enforce by default.
+- Documents live only in the visitor's browser tab and are gone on refresh.
+  Search is a linear scan, which is fine for a few documents; for real usage,
+  use a vector database (Postgres + pgvector, Pinecone, Turbopuffer, etc.).
+- Uploads are capped at 4MB and about 30,000 words per request, and the API
+  routes have best-effort per-IP rate limits. There is no authentication.
 
 ## Scripts
 

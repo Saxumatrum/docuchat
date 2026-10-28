@@ -13,10 +13,11 @@ export const maxDuration = 60;
 const ALLOWED_EXTENSIONS = [".pdf", ".txt", ".md", ".docx"];
 
 // Vercel caps request and response bodies at 4.5MB. Uploads are capped
-// below that, and chunks per request are capped so the embeddings sent
-// back (about 12KB each once rounded) stay well under it too.
+// below that, and chunks per request are capped so what's sent back (about
+// 13KB per chunk: rounded embedding plus ~120 words of text) stays under it
+// too. 250 chunks is roughly 30,000 words.
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
-const MAX_CHUNKS_PER_REQUEST = 120;
+const MAX_CHUNKS_PER_REQUEST = 250;
 
 /** Four decimal places is plenty for cosine ranking and shrinks the JSON. */
 function roundEmbedding(embedding: number[]): number[] {
@@ -41,7 +42,8 @@ async function extractText(file: File): Promise<string> {
     PDFParse.setWorker(getData());
     const parser = new PDFParse({ data: buffer, CanvasFactory });
     try {
-      const result = await parser.getText();
+      // No "-- 1 of 2 --" page markers: they'd end up inside chunks.
+      const result = await parser.getText({ pageJoiner: "" });
       return result.text;
     } finally {
       await parser.destroy();
