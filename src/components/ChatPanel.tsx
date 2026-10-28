@@ -3,7 +3,11 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useEffect, useRef, useState } from "react";
-import type { ChatUIMessage, SourceCitation } from "@/lib/types";
+import { withBase } from "@/lib/basePath";
+import { RETRIEVAL_TOP_K } from "@/lib/models";
+import { searchSimilarChunks } from "@/lib/retrieval";
+import { SAMPLE_FILE, SAMPLE_QUESTIONS } from "@/lib/samples";
+import type { ChatUIMessage, RetrievedChunk, SourceCitation, StoredChunk } from "@/lib/types";
 
 function SourcesList({ sources }: { sources: SourceCitation[] }) {
   if (sources.length === 0) return null;
@@ -67,15 +71,59 @@ function MessageBubble({ message }: { message: ChatUIMessage }) {
   );
 }
 
-export function ChatPanel({ documentsReady }: { documentsReady: boolean }) {
+/**
+ * Embeds the question on the server, then ranks this visitor's own chunks
+ * against it here in the browser.
+ */
+async function retrieve(question: string, chunks: StoredChunk[]): Promise<RetrievedChunk[]> {
+  const res = await fetch(withBase("/api/embed"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text: question }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? "Couldn't search your documents.");
+
+  // Send only the text with the chat request; the embeddings stay here.
+  return searchSimilarChunks(chunks, data.embedding, RETRIEVAL_TOP_K).map((match) => ({
+    id: match.id,
+    text: match.text,
+    sourceName: match.sourceName,
+    chunkIndex: match.chunkIndex,
+    score: match.score,
+  }));
+}
+
+export function ChatPanel({ chunks }: { chunks: StoredChunk[] }) {
   const { messages, sendMessage, status, error, clearError } = useChat<ChatUIMessage>({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
+    transport: new DefaultChatTransport({ api: withBase("/api/chat") }),
   });
   const [input, setInput] = useState("");
+  const [isRetrieving, setIsRetrieving] = useState(false);
+  const [retrieveError, setRetrieveError] = useState<string | null>(null);
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const isBusy = status === "submitted" || status === "streaming";
+  const documentsReady = chunks.length > 0;
+  const sampleLoaded = chunks.some((chunk) => chunk.sourceName === SAMPLE_FILE);
+  const isBusy = isRetrieving || status === "submitted" || status === "streaming";
+
+  async function ask(question: string) {
+    const trimmed = question.trim();
+    if (!trimmed || isBusy) return;
+    setRetrieveError(null);
+    setIsRetrieving(true);
+    try {
+      const context = await retrieve(trimmed, chunks);
+      sendMessage({ text: trimmed }, { body: { context } });
+      setInput("");
+      if (textareaRef.current) textareaRef.current.style.height = "auto";
+    } catch (err) {
+      setRetrieveError(err instanceof Error ? err.message : "Couldn't search your documents.");
+    } finally {
+      setIsRetrieving(false);
+    }
+  }
 
   useEffect(() => {
     scrollAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -83,11 +131,7 @@ export function ChatPanel({ documentsReady }: { documentsReady: boolean }) {
 
   function handleSubmit(e: { preventDefault: () => void }) {
     e.preventDefault();
-    const trimmed = input.trim();
-    if (!trimmed || isBusy) return;
-    sendMessage({ text: trimmed });
-    setInput("");
-    if (textareaRef.current) textareaRef.current.style.height = "auto";
+    ask(input);
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -117,6 +161,21 @@ export function ChatPanel({ documentsReady }: { documentsReady: boolean }) {
               Answers are grounded in the text you uploaded, with citations back to the
               source chunks.
             </p>
+            {sampleLoaded && (
+              <div className="mt-3 flex max-w-md flex-wrap justify-center gap-2">
+                {SAMPLE_QUESTIONS.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    onClick={() => ask(question)}
+                    disabled={isBusy}
+                    className="rounded-full border border-zinc-300 bg-white px-3 py-1.5 text-xs text-zinc-700 hover:border-zinc-400 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -124,7 +183,13 @@ export function ChatPanel({ documentsReady }: { documentsReady: boolean }) {
           <MessageBubble key={message.id} message={message} />
         ))}
 
-        {status === "submitted" && (
+        {retrieveError && (
+          <p className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900">
+            {retrieveError}
+          </p>
+        )}
+
+        {(isRetrieving || status === "submitted") && (
           <div className="flex justify-start">
             <div className="rounded-2xl bg-white px-4 py-3 text-sm text-zinc-400 ring-1 ring-zinc-200 dark:bg-zinc-900 dark:ring-zinc-800">
               <span className="inline-flex gap-1">

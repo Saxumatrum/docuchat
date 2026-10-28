@@ -2,18 +2,40 @@ import {
   convertToModelMessages,
   createUIMessageStream,
   createUIMessageStreamResponse,
-  embed,
   streamText,
   toUIMessageStream,
 } from "ai";
-import { hasDocuments, searchSimilarChunks } from "@/lib/store";
-import { CHAT_MODEL, EMBEDDING_MODEL, RETRIEVAL_TOP_K } from "@/lib/models";
-import type { ChatUIMessage, SourceCitation } from "@/lib/types";
+import { CHAT_MODEL, RETRIEVAL_TOP_K } from "@/lib/models";
+import { rateLimit } from "@/lib/rateLimit";
+import type { ChatUIMessage, RetrievedChunk, SourceCitation } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const SNIPPET_LENGTH = 280;
+// Chunks are ~550 words, so this leaves headroom while capping prompt size.
+const MAX_CHUNK_CHARS = 8000;
+// Only recent turns are sent to the model, to bound cost per request.
+const MAX_HISTORY_MESSAGES = 10;
+
+/**
+ * The browser runs retrieval over its own chunks and sends the matches.
+ * They're the visitor's own text, so this only checks shape and size.
+ */
+function parseContext(raw: unknown): RetrievedChunk[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, RETRIEVAL_TOP_K)
+    .filter(
+      (chunk): chunk is RetrievedChunk =>
+        typeof chunk?.id === "string" &&
+        typeof chunk.text === "string" &&
+        typeof chunk.sourceName === "string" &&
+        typeof chunk.chunkIndex === "number" &&
+        typeof chunk.score === "number",
+    )
+    .map((chunk) => ({ ...chunk, text: chunk.text.slice(0, MAX_CHUNK_CHARS) }));
+}
 
 function buildSystemPrompt(contextBlock: string): string {
   return [
@@ -32,62 +54,45 @@ function buildSystemPrompt(contextBlock: string): string {
   ].join("\n");
 }
 
-function extractLastUserText(messages: ChatUIMessage[]): string {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role !== "user") continue;
-
-    return message.parts
-      .filter((part): part is Extract<ChatUIMessage["parts"][number], { type: "text" }> =>
-        part.type === "text",
-      )
-      .map((part) => part.text)
-      .join("\n")
-      .trim();
-  }
-  return "";
-}
-
 export async function POST(req: Request) {
-  const { messages }: { messages: ChatUIMessage[] } = await req.json();
-  const question = extractLastUserText(messages);
+  const limited = rateLimit(req, "chat", 40);
+  if (limited) return limited;
+
+  const body: { messages: ChatUIMessage[]; context?: unknown } = await req.json();
+  const messages = body.messages.slice(-MAX_HISTORY_MESSAGES);
+  const matches = parseContext(body.context);
 
   const stream = createUIMessageStream<ChatUIMessage>({
     execute: async ({ writer }) => {
       let contextBlock =
         "No documents have been uploaded yet. Tell the user to upload a document before asking questions.";
 
-      if (question && hasDocuments()) {
-        const { embedding } = await embed({ model: EMBEDDING_MODEL, value: question });
-        const matches = searchSimilarChunks(embedding, RETRIEVAL_TOP_K);
+      if (matches.length > 0) {
+        const sources: SourceCitation[] = matches.map((match) => ({
+          id: match.id,
+          sourceName: match.sourceName,
+          chunkIndex: match.chunkIndex,
+          snippet:
+            match.text.length > SNIPPET_LENGTH
+              ? `${match.text.slice(0, SNIPPET_LENGTH)}…`
+              : match.text,
+          score: match.score,
+        }));
 
-        if (matches.length > 0) {
-          const sources: SourceCitation[] = matches.map((match) => ({
-            id: match.id,
-            sourceName: match.sourceName,
-            chunkIndex: match.chunkIndex,
-            snippet:
-              match.text.length > SNIPPET_LENGTH
-                ? `${match.text.slice(0, SNIPPET_LENGTH)}…`
-                : match.text,
-            score: match.score,
-          }));
+        // Persistent data part: rendered by the client as a "Sources" list
+        // beneath the assistant's message.
+        writer.write({
+          type: "data-sources",
+          id: "sources",
+          data: sources,
+        });
 
-          // Persistent data part: rendered by the client as a "Sources" list
-          // beneath the assistant's message.
-          writer.write({
-            type: "data-sources",
-            id: "sources",
-            data: sources,
-          });
-
-          contextBlock = matches
-            .map(
-              (match, index) =>
-                `[${index + 1}] (source: "${match.sourceName}", chunk ${match.chunkIndex + 1})\n${match.text}`,
-            )
-            .join("\n\n---\n\n");
-        }
+        contextBlock = matches
+          .map(
+            (match, index) =>
+              `[${index + 1}] (source: "${match.sourceName}", chunk ${match.chunkIndex + 1})\n${match.text}`,
+          )
+          .join("\n\n---\n\n");
       }
 
       const result = streamText({

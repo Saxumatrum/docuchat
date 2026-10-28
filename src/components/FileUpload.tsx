@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { DocumentSummary } from "@/lib/types";
+import { useRef, useState } from "react";
+import { withBase } from "@/lib/basePath";
+import { SAMPLE_FILE } from "@/lib/samples";
+import type { DocumentSummary, StoredChunk } from "@/lib/types";
 
 interface UploadResult {
   sourceName: string;
@@ -10,11 +12,12 @@ interface UploadResult {
 }
 
 export function FileUpload({
-  onDocumentsChange,
+  documents,
+  onChunksAdded,
 }: {
-  onDocumentsChange: (documents: DocumentSummary[]) => void;
+  documents: DocumentSummary[];
+  onChunksAdded: (chunks: StoredChunk[]) => void;
 }) {
-  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [results, setResults] = useState<UploadResult[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -22,38 +25,32 @@ export function FileUpload({
   const inputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    fetch("/api/upload")
-      .then((res) => res.json())
-      .then((data: { documents: DocumentSummary[] }) => {
-        if (cancelled) return;
-        setDocuments(data.documents);
-        onDocumentsChange(data.documents);
-      })
-      .catch(() => {
-        // Non-fatal: the upload panel simply starts empty.
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  async function handleSample() {
+    try {
+      const res = await fetch(withBase(`/samples/${SAMPLE_FILE}`));
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      await uploadFiles([new File([blob], SAMPLE_FILE, { type: "application/pdf" })]);
+    } catch {
+      setError("Couldn't load the sample. Try uploading your own file.");
+    }
+  }
 
   async function handleFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
+    await uploadFiles(Array.from(fileList));
+  }
 
+  async function uploadFiles(files: File[]) {
     setIsUploading(true);
     setError(null);
     setResults([]);
 
     try {
       const formData = new FormData();
-      Array.from(fileList).forEach((file) => formData.append("files", file));
+      files.forEach((file) => formData.append("files", file));
 
-      const res = await fetch("/api/upload", { method: "POST", body: formData });
+      const res = await fetch(withBase("/api/upload"), { method: "POST", body: formData });
       const data = await res.json();
 
       if (!res.ok) {
@@ -62,8 +59,7 @@ export function FileUpload({
       }
 
       setResults(data.results);
-      setDocuments(data.documents);
-      onDocumentsChange(data.documents);
+      if (data.chunks.length > 0) onChunksAdded(data.chunks);
     } catch {
       setError("Could not reach the server. Please try again.");
     } finally {
@@ -127,7 +123,7 @@ export function FileUpload({
           {isUploading ? "Processing…" : isDragging ? "Drop to upload" : "Click or drag files to upload"}
         </span>
         <span className="text-xs text-zinc-400 dark:text-zinc-600">
-          PDF, TXT, MD, or DOCX — multiple files supported
+          PDF, TXT, MD, or DOCX — up to 4MB in total
         </span>
         <input
           ref={inputRef}
@@ -140,6 +136,18 @@ export function FileUpload({
           className="sr-only"
         />
       </label>
+
+      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+        No file handy?{" "}
+        <button
+          type="button"
+          onClick={handleSample}
+          disabled={isUploading}
+          className="font-medium text-zinc-900 underline underline-offset-2 hover:text-zinc-600 disabled:opacity-50 dark:text-zinc-100 dark:hover:text-zinc-300"
+        >
+          Try a sample staff handbook
+        </button>
+      </p>
 
       {error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 dark:bg-red-950/40 dark:text-red-300">

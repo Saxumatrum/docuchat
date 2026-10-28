@@ -21,7 +21,25 @@ export type ChatDataParts = {
 /** The UI message shape used by both the client (`useChat`) and the server. */
 export type ChatUIMessage = UIMessage<never, ChatDataParts>;
 
-/** Summary of a document stored in the in-memory vector store. */
+/**
+ * A single embedded chunk of a source document. Returned by the upload
+ * route and kept in the visitor's browser; the server stores nothing.
+ */
+export type StoredChunk = {
+  id: string;
+  text: string;
+  sourceName: string;
+  chunkIndex: number;
+  embedding: number[];
+};
+
+/**
+ * A chunk the browser retrieved for a question, sent with the chat request
+ * as context (embedding dropped, since the server only needs the text).
+ */
+export type RetrievedChunk = Omit<StoredChunk, "embedding"> & { score: number };
+
+/** Summary of an uploaded document, derived from its chunks. */
 export type DocumentSummary = {
   sourceName: string;
   chunkCount: number;
